@@ -1,0 +1,9 @@
+torch
+torchvision
+numpy
+scikit-learn
+streamlit>=1.46.0
+matplotlib
+pandas
+Pillow
+onnxruntime
