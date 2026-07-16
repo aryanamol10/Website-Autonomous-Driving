@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 import os
 import json
 import time
+from firebase_client import list_demo_datasets, download_image, log_prediction
 
 # ==========================================
 # 1. REMEDIES FOR YOUR EXACT CATEGORIES
@@ -402,34 +403,37 @@ def render_model_page():
     if 'camera_active' not in st.session_state:
         st.session_state.camera_active = False
 
-    demo_files = [
-        ("Severe Mud", "demos/RMV84.jpg"),
-        ("Water Drops", "demos/RVW8593.jpg"),
-        ("Clean Road", "demos/RVC8493.jpg"),
-        ("Snow / Ice", "demos/snow_storm-074.jpg")
-    ]
+    demo_files = list_demo_datasets()  # [(label, storage_path), ...] pulled from Firebase Storage
 
     input_col, results_col = st.columns([0.45, 0.55], gap="large")
 
     with input_col:
-        st.markdown('<div class="section-label">Sample frames</div>', unsafe_allow_html=True)
-        demo_cols = st.columns(4)
+        st.markdown('<div class="section-label">Sample datasets</div>', unsafe_allow_html=True)
 
-        for idx, (label, path) in enumerate(demo_files):
-            with demo_cols[idx]:
-                if os.path.exists(path):
-                    img_thumb = Image.open(path).convert('RGB').resize((100, 75))
-                    st.markdown('<div class="demo-card">', unsafe_allow_html=True)
-                    st.image(img_thumb, width='stretch')
-                    st.markdown(f"<p>{label}</p>", unsafe_allow_html=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+        if not demo_files:
+            st.caption(
+                "No datasets found in Firebase Storage yet. Run upload_demos.py, "
+                "or check your st.secrets Firebase configuration."
+            )
+        else:
+            demo_cols = st.columns(min(4, len(demo_files)))
 
-                    if st.button("Test", key=f"demo_btn_{idx}", use_container_width=True):
-                        st.session_state.active_demo_path = path
-                        st.session_state.use_demo = True
-                        st.session_state.camera_active = False
-                else:
-                    st.caption(f"Missing: {label}")
+            for idx, (label, storage_path) in enumerate(demo_files):
+                with demo_cols[idx % len(demo_cols)]:
+                    img_thumb = download_image(storage_path)
+                    if img_thumb is not None:
+                        st.markdown('<div class="demo-card">', unsafe_allow_html=True)
+                        st.image(img_thumb.resize((100, 75)), width='stretch')
+                        st.markdown(f"<p>{label}</p>", unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                        # Clicking a dataset auto-feeds it into the model below.
+                        if st.button("Test", key=f"demo_btn_{idx}", use_container_width=True):
+                            st.session_state.active_demo_path = storage_path
+                            st.session_state.use_demo = True
+                            st.session_state.camera_active = False
+                    else:
+                        st.caption(f"Could not load: {label}")    
 
         st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
         
@@ -469,7 +473,7 @@ def render_model_page():
     elif uploaded_file is not None:
         image_to_process = Image.open(uploaded_file)
     elif st.session_state.use_demo and st.session_state.active_demo_path:
-        image_to_process = Image.open(st.session_state.active_demo_path)
+        image_to_process = download_image(st.session_state.active_demo_path)
 
     with results_col:
         if image_to_process is not None:
@@ -503,6 +507,12 @@ def render_model_page():
                         st.metric(label="Severity", value="UNAVAILABLE")
 
                 base_action = OBSTRUCTION_REMEDIES.get(prediction_text, "Remedy protocol mismatch.")
+                source = (
+                    "camera" if st.session_state.camera_active
+                    else "upload" if uploaded_file is not None
+                    else st.session_state.active_demo_path or "unknown"
+                )
+                log_prediction(prediction_text, prediction_confidence, severity_label, source)
                 if prediction_text == "clean":
                     st.success(f"**System check:** {base_action}")
                 elif severity_label == "Severe":

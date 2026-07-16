@@ -1,0 +1,3 @@
+# Firebase credentials -- never commit these
+.streamlit/secrets.toml
+*firebase-adminsdk*.json
