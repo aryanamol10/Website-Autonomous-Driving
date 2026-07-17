@@ -23,7 +23,13 @@ import matplotlib.pyplot as plt
 import os
 import json
 import time
-from firebase_client import list_demo_datasets, download_image, log_prediction
+from firebase_client import (
+    list_demo_datasets,
+    download_image,
+    log_prediction,
+    list_datasets,
+    list_dataset_images,
+)
 
 # ==========================================
 # 1. REMEDIES FOR YOUR EXACT CATEGORIES
@@ -86,6 +92,29 @@ def get_ui_prediction(model, image_obj):
         _, preds = torch.max(outputs, 1)
 
     return CLASS_NAMES[preds[0].item()], probabilities
+
+def run_dataset_batch(dataset_name: str, split: str):
+    """Pulls every image for dataset_name/split from Firebase Storage and
+    runs the classifier on each one, storing results in session_state."""
+    model = load_trained_model()
+    items = list_dataset_images(dataset_name, split=split)
+
+    if not items:
+        st.warning(f"No images found under datasets/{dataset_name}/{split}/")
+        st.session_state.batch_results = (dataset_name, split, [])
+        return
+
+    results = []
+    progress = st.progress(0.0, text=f"Loading {len(items)} images from Firebase...")
+    for i, (true_label, storage_path) in enumerate(items):
+        img = download_image(storage_path)
+        if img is not None:
+            pred_label, probs = get_ui_prediction(model, img)
+            results.append((true_label, pred_label, probs, img))
+        progress.progress((i + 1) / len(items), text=f"Processed {i + 1}/{len(items)}")
+    progress.empty()
+
+    st.session_state.batch_results = (dataset_name, split, results)
 
 # ==========================================
 # OPACITY SEVERITY ONNX LOADER & INFERENCE
@@ -404,12 +433,34 @@ def render_model_page():
         st.session_state.camera_active = False
 
     demo_files = list_demo_datasets()  # [(label, storage_path), ...] pulled from Firebase Storage
+    dataset_names = list_datasets()    # e.g. ["autonomous-driving-v1", "woodscape-fisheye"]
+
+    if 'batch_results' not in st.session_state:
+        st.session_state.batch_results = None  # (dataset_name, split, [(label, pred, probs, img)])
 
     input_col, results_col = st.columns([0.45, 0.55], gap="large")
 
     with input_col:
-        st.markdown('<div class="section-label">Sample datasets</div>', unsafe_allow_html=True)
+        if dataset_names:
+            st.markdown('<div class="section-label">Run a full dataset</div>', unsafe_allow_html=True)
+            ds_col, split_col = st.columns([0.6, 0.4])
+            with ds_col:
+                selected_dataset = st.selectbox("Dataset", dataset_names, label_visibility="collapsed")
+            with split_col:
+                selected_split = st.selectbox(
+                    "Split", ["test", "val", "train"], label_visibility="collapsed"
+                )
 
+            if st.button(f"▶ Run inference on {selected_split}", use_container_width=True):
+                run_dataset_batch(selected_dataset, selected_split)
+
+            if st.session_state.batch_results is not None:
+                ds_name, split_name, _ = st.session_state.batch_results
+                st.caption(f"Showing results for **{ds_name} / {split_name}**")
+
+            st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="section-label">Sample datasets</div>', unsafe_allow_html=True)
         if not demo_files:
             st.caption(
                 "No datasets found in Firebase Storage yet. Run upload_demos.py, "

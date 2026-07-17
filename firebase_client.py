@@ -94,7 +94,46 @@ def download_image(storage_path: str):
     data = blob.download_as_bytes()
     return Image.open(io.BytesIO(data)).convert("RGB")
 
+@st.cache_data(ttl=300, show_spinner=False)
+def list_datasets(prefix: str = "datasets/"):
+    """Returns the distinct dataset names found under `prefix`.
 
+    Expects layout: datasets/<dataset_name>/<split>/<class>/<file>.jpg
+    """
+    bucket = get_bucket()
+    if bucket is None:
+        return []
+
+    names = set()
+    for blob in bucket.list_blobs(prefix=prefix):
+        rel = blob.name[len(prefix):]
+        if not rel or "/" not in rel:
+            continue
+        dataset_name = rel.split("/", 1)[0]
+        names.add(dataset_name)
+    return sorted(names)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def list_dataset_images(dataset_name: str, split: str = "test", prefix: str = "datasets/"):
+    """Returns (label, storage_path) for every image under
+    datasets/<dataset_name>/<split>/, where label is the class subfolder.
+    """
+    bucket = get_bucket()
+    if bucket is None:
+        return []
+
+    folder_prefix = f"{prefix}{dataset_name}/{split}/"
+    images = []
+    for blob in bucket.list_blobs(prefix=folder_prefix):
+        if blob.name.endswith("/"):
+            continue
+        rel = blob.name[len(folder_prefix):]
+        parts = rel.split("/")
+        label = parts[0] if len(parts) > 1 else "unlabeled"
+        images.append((label, blob.name))
+    return images
+    
 def log_prediction(prediction_text, confidence, severity_label, source):
     """Writes one prediction record to Firestore. Safe no-op if unconfigured."""
     db = get_firestore_client()
